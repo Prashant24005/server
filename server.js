@@ -1,123 +1,66 @@
-import express from 'express';
-import pkg from 'pg';
-import crypto from 'crypto';
-import dotenv from 'dotenv';
+const express = require('express');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { Pool } = require('pg');
+const dotenv = require('dotenv');
+const cors = require('cors');
 
+// Initialize dotenv and express
 dotenv.config();
-
-const { Pool } = pkg;
 const app = express();
-const port = process.env.PORT || 3001;
+app.use(express.json());
+app.use(cors());
 
-// PostgreSQL connection
+// PostgreSQL Database Connection
 const pool = new Pool({
   user: process.env.PG_USER,
   host: process.env.PG_HOST,
-  database: process.env.PG_NAME,
+  database: process.env.PG_DATABASE,
   password: process.env.PG_PASSWORD,
-  port: process.env.PG_PORT || 5432,
+  port: process.env.PG_PORT,
 });
 
-// Middleware to parse JSON request body
-app.use(express.json());
-
-// Utility functions
-const hashPassword = (password, salt = crypto.randomBytes(16).toString('hex')) => {
-  const hashedPassword = crypto
-    .pbkdf2Sync(password, salt, 1000, 64, 'sha512')
-    .toString('hex');
-  return { hashedPassword, salt };
-};
-
-const verifyPassword = (password, salt, hashedPassword) => {
-  const hashedInput = crypto
-    .pbkdf2Sync(password, salt, 1000, 64, 'sha512')
-    .toString('hex');
-  return hashedInput === hashedPassword;
-};
-
-// Signup route
+// Signup Route
 app.post('/api/signup', async (req, res) => {
-  const { username, email, password, userType } = req.body;
-
-  if (!username || !email || !password || !userType) {
-    return res.status(400).json({ message: 'All fields are required.' });
-  }
+  const { username, email, password } = req.body;
+  const hashedPassword = await bcrypt.hash(password, 10);
 
   try {
-    // Check if the email already exists
-    const emailCheckResult = await pool.query(
-      'SELECT * FROM details WHERE email = $1',
-      [email]
-    );
-    if (emailCheckResult.rows.length > 0) {
-      return res.status(400).json({ message: 'Email is already registered.' });
-    }
-
-    // Hash the password
-    const { hashedPassword, salt } = hashPassword(password);
-
-    // Insert new user into the database
-    const insertResult = await pool.query(
-      'INSERT INTO details (username, email, password, salt, user_type) VALUES ($1, $2, $3, $4, $5) RETURNING id',
-      [username, email, hashedPassword, salt, userType]
+    const result = await pool.query(
+      'INSERT INTO users (username, email, password) VALUES ($1, $2, $3) RETURNING *',
+      [username, email, hashedPassword]
     );
 
-    res.status(201).json({
-      message: 'Signup successful!',
-      userId: insertResult.rows[0].id,
-    });
+    res.status(201).json({ message: 'Signup successful' });
   } catch (err) {
-    console.error('Error during signup:', err.message);
-    res
-      .status(500)
-      .json({ message: 'An error occurred while signing up. Please try again.' });
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
-// Login route
+// Login Route
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
 
-  if (!email || !password) {
-    return res.status(400).json({ message: 'Email and password are required.' });
-  }
-
   try {
-    // Check if the user exists
-    const userResult = await pool.query(
-      'SELECT * FROM details WHERE email = $1',
-      [email]
-    );
+    const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    const user = result.rows[0];
 
-    if (userResult.rows.length === 0) {
-      return res.status(401).json({ message: 'Invalid email or password.' });
-    }
+    if (!user) return res.status(400).json({ message: 'User not found' });
 
-    const user = userResult.rows[0];
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(400).json({ message: 'Invalid credentials' });
 
-    // Verify the password
-    const isValidPassword = verifyPassword(password, user.salt, user.password);
-
-    if (!isValidPassword) {
-      return res.status(401).json({ message: 'Invalid email or password.' });
-    }
-
-    res.status(200).json({
-      message: 'Login successful!',
-      userId: user.id,
-      username: user.username,
-      userType: user.user_type,
-    });
+    const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    res.json({ message: 'Login successful', token });
   } catch (err) {
-    console.error('Error during login:', err.message);
-    res
-      .status(500)
-      .json({ message: 'An error occurred while logging in. Please try again.' });
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
-// Start the server
-app.listen(port, () => {
-  console.log(`Server running on http://localhost:${port}`);
+// Server setup
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
 });
