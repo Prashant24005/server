@@ -21,39 +21,16 @@ const pool = new Pool({
 
 // Signup Route
 app.post('/api/signup', async (req, res) => {
-  const { username, email, password } = req.body;
+  const { username, email, password, userType, pgLocation, distanceFromCollege } = req.body;
 
   // Store password in plain text (not recommended in production!)
   try {
     const result = await pool.query(
-      'INSERT INTO users (username, email, password) VALUES ($1, $2, $3) RETURNING *',
-      [username, email, password] // Save password as plain text
+      'INSERT INTO users (username, email, password, user_type, pg_location, distance_from_college) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+      [username, email, password, userType, pgLocation || null, distanceFromCollege || null]
     );
 
     res.status(201).json({ message: 'Signup successful' });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Login Route
-app.post('/api/login', async (req, res) => {
-  const { email, password } = req.body;
-
-  try {
-    const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
-    const user = result.rows[0];
-
-    if (!user) return res.status(400).json({ message: 'User not found' });
-
-    // Check if password matches the stored plain text password
-    if (user.password !== password) {
-      return res.status(400).json({ message: 'Invalid credentials' });
-    }
-
-    const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '1h' });
-    res.json({ message: 'Login successful', token });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
